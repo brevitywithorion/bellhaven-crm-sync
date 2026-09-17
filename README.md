@@ -42,8 +42,8 @@ Re-runs are safe. A second `pipeline run` hashes the proposed actions; if that h
 
 Schedule files (not live — the spec did not ask to host anything):
 
-- `cron/daily.cron` — weekdays 06:15, rebuild queue only
-- `.github/workflows/daily-sync.yml` — same idea on Actions
+- `cron/daily.cron` — example weekday 06:15 entry if you want a machine cron
+- `.github/workflows/daily-sync.yml` — same job, manual only (Actions → Run workflow)
 
 ## Matching rules
 
