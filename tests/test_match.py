@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock
 
-from src.match import CONFIDENT, build_proposals, map_care, needs_chow, score_pair
+from src.match import CONFIDENT, build_proposals, find_parent, map_care, needs_chow, score_pair
 from src.pipeline import apply_actions, resolve_chow_actions
 
 
@@ -133,6 +133,20 @@ class ProposalShapes(unittest.TestCase):
         self.assertEqual(create["actions"][0]["method"], "POST")
         self.assertEqual(create["actions"][0]["body"]["parent_id"], PARENT["account_id"])
 
+    def test_follows_chow_pointer_no_second_chow(self):
+        old = acct(lifetime_revenue=51250, outstanding_ar=3800, chow_current_account="NEW1")
+        new = acct(
+            account_id="NEW1",
+            parent_id=PARENT["account_id"],
+            parent_name=PARENT["name"],
+            lifetime_revenue=0,
+            outstanding_ar=0,
+        )
+        props = build_proposals([loc()], [PARENT, old, new])
+        self.assertFalse(any(p["kind"] == "chow" for p in props))
+        site = next(p for p in props if p["key"] == "site:bellhaven-of-marietta")
+        self.assertEqual(site["accounts"][0]["account_id"], "NEW1")
+
 
 def _chow_pair(old_id="OLD1"):
     return [
@@ -149,6 +163,14 @@ def _chow_pair(old_id="OLD1"):
             "body": {"chow_current_account": "$successor_id"},
         },
     ]
+
+
+class ParentDiscovery(unittest.TestCase):
+    def test_finds_parent_by_name_even_if_id_differs(self):
+        other_id = dict(PARENT)
+        other_id["account_id"] = "NOT-THE-HARDCODED-ID"
+        found = find_parent([acct(name="Bellhaven of Marietta"), other_id])
+        self.assertEqual(found["account_id"], "NOT-THE-HARDCODED-ID")
 
 
 class WriteTimeChow(unittest.TestCase):
@@ -182,6 +204,40 @@ class WriteTimeChow(unittest.TestCase):
         self.assertEqual(account_id, "OLD1")
         self.assertEqual(body["parent_id"], PARENT["account_id"])
         self.assertTrue(results[0]["action"]["role"] == "chow_fallback_reparent")
+
+    def test_skips_post_when_active_twin_exists(self):
+        crm = MagicMock()
+        crm.get_account.return_value = {
+            "account_id": "OLD1",
+            "lifetime_revenue": 51250,
+            "outstanding_ar": 3800,
+            "chow_current_account": "",
+        }
+        crm.list_accounts.return_value = [
+            {
+                "account_id": "EXISTING",
+                "name": "Bellhaven of Marietta",
+                "parent_id": PARENT["account_id"],
+                "billing_zip": "45750",
+                "status": "Active",
+            }
+        ]
+        results = apply_actions(crm, _chow_pair(), dry_run=False)
+        crm.create_account.assert_not_called()
+        self.assertTrue(results[0]["response"].get("skipped"))
+
+    def test_dry_run_does_not_write(self):
+        crm = MagicMock()
+        crm.get_account.return_value = {
+            "account_id": "OLD1",
+            "lifetime_revenue": 51250,
+            "outstanding_ar": 3800,
+            "chow_current_account": "",
+        }
+        results = apply_actions(crm, _chow_pair(), dry_run=True)
+        crm.create_account.assert_not_called()
+        crm.patch_account.assert_not_called()
+        self.assertTrue(results[0]["dry_run"])
 
 
 if __name__ == "__main__":
