@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import MagicMock
 
 from src.match import CONFIDENT, build_proposals, map_care, needs_chow, score_pair
+from src.pipeline import apply_actions, resolve_chow_actions
 
 
 PARENT = {
@@ -130,6 +132,56 @@ class ProposalShapes(unittest.TestCase):
         create = next(p for p in props if p["kind"] == "create")
         self.assertEqual(create["actions"][0]["method"], "POST")
         self.assertEqual(create["actions"][0]["body"]["parent_id"], PARENT["account_id"])
+
+
+def _chow_pair(old_id="OLD1"):
+    return [
+        {
+            "method": "POST",
+            "path": "/accounts",
+            "role": "chow_successor",
+            "body": {"name": "Bellhaven of Marietta", "parent_id": PARENT["account_id"], "status": "Active"},
+        },
+        {
+            "method": "PATCH",
+            "path": f"/accounts/{old_id}",
+            "role": "chow_old",
+            "body": {"chow_current_account": "$successor_id"},
+        },
+    ]
+
+
+class WriteTimeChow(unittest.TestCase):
+    def test_refuses_second_chow_on_live_row(self):
+        crm = MagicMock()
+        crm.get_account.return_value = {
+            "account_id": "OLD1",
+            "lifetime_revenue": 51250,
+            "outstanding_ar": 3800,
+            "chow_current_account": "ALREADY",
+        }
+        planned = resolve_chow_actions(crm, _chow_pair())
+        self.assertEqual(planned[0]["role"], "chow_refused_second")
+        apply_actions(crm, _chow_pair())
+        crm.create_account.assert_not_called()
+        crm.patch_account.assert_not_called()
+
+    def test_falls_back_to_reparent_when_ar_cleared(self):
+        crm = MagicMock()
+        crm.get_account.return_value = {
+            "account_id": "OLD1",
+            "lifetime_revenue": 51250,
+            "outstanding_ar": 0,
+            "chow_current_account": "",
+        }
+        crm.patch_account.return_value = {"message": "updated"}
+        results = apply_actions(crm, _chow_pair())
+        crm.create_account.assert_not_called()
+        crm.patch_account.assert_called_once()
+        account_id, body = crm.patch_account.call_args[0]
+        self.assertEqual(account_id, "OLD1")
+        self.assertEqual(body["parent_id"], PARENT["account_id"])
+        self.assertTrue(results[0]["action"]["role"] == "chow_fallback_reparent")
 
 
 if __name__ == "__main__":
