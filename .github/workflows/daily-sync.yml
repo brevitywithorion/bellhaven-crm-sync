@@ -14,6 +14,13 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
+      - name: Restore yesterday's decision store
+        uses: actions/cache@v4
+        with:
+          path: data/decisions.json
+          key: decisions-${{ github.run_id }}
+          restore-keys: |
+            decisions-
       - name: Scrape + snapshot + match
         env:
           CRM_TOKEN: ${{ secrets.CRM_TOKEN }}
