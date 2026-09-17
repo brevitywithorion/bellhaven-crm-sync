@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from . import config
 from .crm import CRM
 from .match import build_proposals, needs_chow
+from .normalize import norm_zip
 from .scraper import scrape
 from .store import load_json, save_json, should_skip
 
@@ -129,22 +130,66 @@ def resolve_chow_actions(crm: CRM, actions: list[dict]) -> list[dict]:
     return out
 
 
-def apply_actions(crm: CRM, actions: list[dict]) -> list[dict]:
-    """Execute approved actions. CHOW is re-checked against the live account."""
+def _active_twin(crm: CRM, body: dict):
+    """Avoid a second POST when name+zip+parent already exist as Active."""
+    want_name = (body.get("name") or "").strip().lower()
+    want_zip = norm_zip(body.get("billing_zip") or "")
+    want_parent = body.get("parent_id") or ""
+    if not want_name:
+        return None
+    for a in crm.list_accounts():
+        if (a.get("status") or "") != "Active":
+            continue
+        if want_parent and (a.get("parent_id") or "") != want_parent:
+            continue
+        if (a.get("name") or "").strip().lower() != want_name:
+            continue
+        if want_zip and norm_zip(a.get("billing_zip") or "") != want_zip:
+            continue
+        return a
+    return None
+
+
+def apply_actions(crm: CRM, actions: list[dict], *, dry_run: bool = False) -> list[dict]:
+    """Execute approved actions. CHOW is re-checked against the live account.
+
+    dry_run=True still reads the live row for the CHOW lock, but does not POST/PATCH.
+    """
     results = []
     successor_id = None
-    for action in resolve_chow_actions(crm, actions):
+    planned = resolve_chow_actions(crm, actions)
+    for action in planned:
         method = action["method"].upper()
         if method == "SKIP":
-            results.append({"action": action, "response": {"skipped": True, "reason": action.get("reason")}})
+            results.append({"action": action, "response": {"skipped": True, "reason": action.get("reason")}, "dry_run": dry_run})
             continue
         body = dict(action.get("body") or {})
         for k, v in list(body.items()):
             if v == "$successor_id":
-                if not successor_id:
+                if dry_run:
+                    body[k] = "$successor_id"
+                elif not successor_id:
                     raise RuntimeError("CHOW successor id missing; create must run first")
-                body[k] = successor_id
+                else:
+                    body[k] = successor_id
+        if dry_run:
+            results.append({"action": action, "planned_body": body, "dry_run": True})
+            continue
         if method == "POST" and action["path"] == "/accounts":
+            twin = _active_twin(crm, body)
+            if twin:
+                successor_id = twin["account_id"]
+                results.append(
+                    {
+                        "action": action,
+                        "response": {
+                            "skipped": True,
+                            "reason": f"Active twin already exists {twin['account_id']}",
+                            "account_id": twin["account_id"],
+                        },
+                    }
+                )
+                continue
             resp = crm.create_account(body)
             successor_id = resp.get("account_id")
             results.append({"action": action, "response": resp})
@@ -165,6 +210,10 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("match", help="Build review proposals from local snapshots")
     p_run = sub.add_parser("run", help="Scrape + snapshot + match (no writes)")
     p_run.add_argument("--skip-scrape", action="store_true")
+    p_apply = sub.add_parser("apply", help="Apply pending proposals (default: dry-run)")
+    p_apply.add_argument("--write", action="store_true", help="Actually POST/PATCH. Off = dry-run.")
+    p_apply.add_argument("--key", help="Only this proposal key")
+    p_apply.add_argument("--all", action="store_true", help="Required with --write to apply every pending item")
     args = parser.parse_args(argv)
 
     if args.cmd == "scrape":
@@ -194,6 +243,23 @@ def main(argv: list[str] | None = None) -> None:
         print(f"{len(pending)} proposals need review")
         for p in pending:
             print(f"  [{p['kind']:16}] {p['confidence']:6} {p['title']}")
+        return
+    if args.cmd == "apply":
+        doc = load_json(config.PROPOSALS_PATH, {})
+        pending = list(doc.get("pending") or [])
+        if args.key:
+            pending = [p for p in pending if p.get("key") == args.key]
+            if not pending:
+                raise SystemExit(f"No pending proposal with key={args.key}")
+        if args.write and not args.key and not args.all:
+            raise SystemExit("Refusing --write on the whole queue. Pass --key KEY or --all.")
+        dry = not args.write
+        crm = CRM()
+        print(f"{'DRY RUN' if dry else 'WRITE'} {len(pending)} proposal(s)")
+        for p in pending:
+            print(f"  [{p['kind']}] {p['title']}")
+            for row in apply_actions(crm, p.get("actions") or [], dry_run=dry):
+                print("   ", row.get("dry_run") and "planned" or "wrote", row.get("planned_body") or row.get("response"))
 
 
 if __name__ == "__main__":
