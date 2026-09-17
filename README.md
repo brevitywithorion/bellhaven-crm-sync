@@ -1,8 +1,10 @@
 # Bellhaven website → CRM sync
 
+[![tests](https://github.com/brevitywithorion/bellhaven-crm-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/brevitywithorion/bellhaven-crm-sync/actions/workflows/ci.yml)
+
 Clipboard Health analyst exercise. Scrapes the public Bellhaven directory, matches each community to the CRM sandbox, and queues every write for a person. **The API is never called for a write until someone approves the proposal.**
 
-Repo is the tool. The thing they grade is the **CRM copy after those approvals**.
+Repo is the tool. The thing they grade is the **CRM copy after those approvals**. Matching approach, CHOW, AI use, and next steps are in [WRITEUP.md](WRITEUP.md).
 
 ## Run
 
@@ -11,15 +13,18 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 export CRM_TOKEN='your-token'          # never commit this
 python -m src.pipeline run             # scrape + snapshot + match
+python -m src.pipeline apply           # dry-run pending writes (add --write --key or --write --all)
 python -m src.review_app               # http://127.0.0.1:5055
 python -m unittest tests.test_match    # no token needed
 ```
 
-CI (`.github/workflows/ci.yml`) runs those unit tests on every push and PR to `main` — no token, no CRM writes.
+CI runs those unit tests on every push and PR — no token, no CRM writes.
 
 ## Review app
 
 Local queue at `http://127.0.0.1:5055`. Each card is website vs CRM, the evidence, the exact API payload, and Approve / Reject. Writes only happen on Approve.
+
+Illustrative capture of the review UI (CHOW + create cards). Live app is `python -m src.review_app`.
 
 ![Review queue showing a CHOW proposal for Bellhaven of Marietta and a create proposal for Bellhaven of Batavia](docs/review-queue.svg)
 
@@ -42,7 +47,7 @@ Schedule files (not live — the spec did not ask to host anything):
 
 ## Matching rules
 
-Parent: `0015QAPLGS3FVYEEEM` (Bellhaven Senior Living).
+Parent discovered by name `Bellhaven Senior Living (Parent Account)`.
 
 | Situation | Write |
 | --- | --- |
@@ -75,7 +80,7 @@ Care offerings collapse onto the CRM enum: “Short-Term Rehabilitation & Nursin
 
 A second `python -m src.pipeline run` should print `0 proposals need review`.
 
-## How AI was used
+## How I used AI
 
 An AI coding agent inspected the site and OpenAPI, drafted the scraper / matcher / review app, and applied approved writes through the same `apply_actions` path the app uses. Every CHOW, collision, and leftover was checked against address, parent, `lifetime_revenue`, and `outstanding_ar` before write. The daily job does not call an LLM — matching is deterministic so it can rerun.
 
@@ -91,4 +96,4 @@ An AI coding agent inspected the site and OpenAPI, drafted the scraper / matcher
 2. Flip `CONFIDENT` in `src/match.py` by a few points, rematch, refresh `:5055`.
 3. Reject one leftover and rerun — it stays off the queue because of `data/decisions.json`.
 4. Open Marietta on Cedar Trail in the CRM browser and show `chow_current_account`.
-5. Skip `__PROBE_DELETE_ME__` / `TEST DO NOT KEEP` rows in the CRM browser — sandbox schema probes, already Inactive.
+5. Skip `__PROBE_DELETE_ME__` / `TEST DO NOT KEEP` in the CRM browser — sandbox probes, already Inactive. Same for Inactive twins with `duplicate_of_account`.
