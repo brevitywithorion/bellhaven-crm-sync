@@ -21,10 +21,18 @@ jobs:
           key: decisions-${{ github.run_id }}
           restore-keys: |
             decisions-
-      - name: Scrape + snapshot + match
+      - name: Scrape website (always)
+        run: python -m src.pipeline scrape
+      - name: Snapshot CRM + match
         env:
           CRM_TOKEN: ${{ secrets.CRM_TOKEN }}
-        run: python -m src.pipeline run
+        run: |
+          if [ -z "$CRM_TOKEN" ]; then
+            echo "No CRM_TOKEN repo secret. Scrape-only; skip snapshot/match."
+            echo "Add it at Settings → Secrets and variables → Actions → CRM_TOKEN"
+            exit 0
+          fi
+          python -m src.pipeline run --skip-scrape
       - name: Upload queue artifacts
         uses: actions/upload-artifact@v4
         with:
