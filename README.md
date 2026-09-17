@@ -15,6 +15,12 @@ python -m src.review_app               # http://127.0.0.1:5055
 python -m unittest tests.test_match    # no token needed
 ```
 
+## Review app
+
+Local queue at `http://127.0.0.1:5055`. Each card is website vs CRM, the evidence, the exact API payload, and Approve / Reject. Writes only happen on Approve.
+
+![Review queue showing a CHOW proposal for Bellhaven of Marietta and a create proposal for Bellhaven of Batavia](docs/review-queue.svg)
+
 ## Design
 
 ```
