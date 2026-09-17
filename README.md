@@ -1,50 +1,85 @@
 # Bellhaven website → CRM sync
 
-Daily pipeline that scrapes Bellhaven communities, matches them to the CRM sandbox, and queues every write for human review. **Nothing is written to the CRM until a reviewer approves it.**
+Clipboard Health analyst exercise. Scrapes the public Bellhaven directory, matches each community to the CRM sandbox, and queues every write for a person. **The API is never called for a write until someone approves the proposal.**
 
-Public repo for the Clipboard Health analyst exercise.
+Repo is the tool. The thing they grade is the **CRM copy after those approvals**.
 
-## Run locally
+## Run
 
 ```bash
-cd bellhaven-crm-sync
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-export CRM_TOKEN='your-token'
-python -m src.pipeline run
-python -m src.review_app          # http://127.0.0.1:5055
+export CRM_TOKEN='your-token'          # never commit this
+python -m src.pipeline run             # scrape + snapshot + match
+python -m src.review_app               # http://127.0.0.1:5055
+python -m unittest tests.test_match    # no token needed
 ```
 
-## What the four pieces do
+## Design
 
-1. **Scraper** (`src/scraper.py`) — every community page plus Findlay from the homepage.
-2. **Matcher** (`src/match.py`) — confident match, field/parent fix, create, duplicate, leftover, CHOW.
-3. **Review app** (`src/review_app.py`) — evidence + exact API payload. Writes only on approve.
-4. **Daily schedule** — `cron/daily.cron` and `.github/workflows/daily-sync.yml`. Fingerprints in `data/decisions.json` make reruns safe.
+```
+website ──scraper──► locations.json
+CRM API ──snapshot─► accounts.json
+        └──match──► proposals.json ──review app──► PATCH / POST
+                         ▲
+              decisions.json (fingerprint → approved|rejected)
+```
+
+Re-runs are safe. A second `pipeline run` hashes the proposed actions; if that hash was already decided, the item stays off the queue.
+
+Schedule files (not live — the spec did not ask to host anything):
+
+- `cron/daily.cron` — weekdays 06:15, rebuild queue only
+- `.github/workflows/daily-sync.yml` — same idea on Actions
 
 ## Matching rules
 
-Bellhaven parent: `0015QAPLGS3FVYEEEM`.
+Parent: `0015QAPLGS3FVYEEEM` (Bellhaven Senior Living).
 
-- Same facility, already under Bellhaven → patch drifted name/address/phone/care_type.
-- Wrong/missing parent, and NOT (revenue AND AR>0) → re-parent in place.
-- Wrong parent AND lifetime_revenue > 0 AND outstanding_ar > 0 → CHOW: new Bellhaven child, set `chow_current_account` on the old row, do not change old parent.
-- No CRM row → create under Bellhaven.
-- Several CRM rows for one site → survivor stays Active; losers get `duplicate_of_account` + Inactive.
-- Active Bellhaven child missing from the website → Inactive + note. No delete.
+| Situation | Write |
+| --- | --- |
+| Same building, already a Bellhaven child | Patch drifted name / address / phone / `care_type` |
+| Same building, wrong parent, **not** (revenue AND AR > 0) | Re-parent the existing row |
+| Same building, wrong parent, **revenue > 0 AND AR > 0** | **CHOW**: new Bellhaven child; set `chow_current_account` on the old row; do not touch old `parent_id` |
+| Website community, no CRM row | `POST` under Bellhaven |
+| Several CRM rows for one building | One survivor (Active, already Bellhaven, Bellhaven-branded, then revenue). Losers: `duplicate_of_account` + `Inactive` |
+| Active Bellhaven child missing from the site | `Inactive` + note. No delete. |
 
-Name-only collisions are not matches (Hudson Amberly Manor ≠ Colorado Springs; 118 Union Square Dr ≠ 240 Market St).
+Scoring is zip + street similarity + city/state + name. Two hard guards:
 
-## End state of this CRM copy
+- House numbers that disagree (and are not a PO Box) cannot be a confident match. Stops *Union Square Senior Living* at 240 Market St matching *Bellhaven at Union Square* at 118 Union Square Dr.
+- Same name in a different city is not a match. Hudson, OH *Amberly Manor* is not Colorado Springs *Amberly Manor*.
 
-35 website communities ↔ 35 Active Bellhaven children. Second pipeline run is an empty queue.
+Findlay is advertised on the homepage and omitted from `/communities?page=N`. The scraper follows homepage links so it is not treated as a closed leftover.
 
-CHOW: Marietta `001A34WFSUYHCRBLFT` → `00190EC211DECFC16D`; Tiffin `001U6RW32TY0WSXZZB` → `001C38203B5A6A57E6`.
+Care offerings collapse onto the CRM enum: “Short-Term Rehabilitation & Nursing” → Skilled Nursing, “Memory Support” → Memory Care.
 
-Leftovers inactivated: Alliance, Coldwater, Sandusky.
+## What this CRM copy looks like now
 
-## Time and AI use
+- 35 website communities ↔ 35 Active Bellhaven children
+- Care types aligned with the public site
+- CHOW (old row stays on Cedar Trail):
+  - Marietta `001A34WFSUYHCRBLFT` → `00190EC211DECFC16D`
+  - Tiffin `001U6RW32TY0WSXZZB` → `001C38203B5A6A57E6`
+- Re-parented in place (revenue but AR = 0): Lima, Findlay, plus Kettering / Zanesville once they were safe to move
+- Leftovers inactivated, not deleted: Alliance, Coldwater, Sandusky
+- Sandusky has revenue and AR. CHOW applies to *parent moves*, not closings, so billing stays on the same id
 
-About 2 hours 15 minutes. An AI coding agent inspected the site/API and drafted the pipeline; every proposal was checked against address, parent, revenue, and AR before write. The daily job itself does not call an LLM.
+A second `python -m src.pipeline run` should print `0 proposals need review`.
 
-Next: administrator/contact sync, a nightly diff email, and fixture tests for CHOW/duplicate/collision cases.
+## How AI was used
+
+An AI coding agent inspected the site and OpenAPI, drafted the scraper / matcher / review app, and applied approved writes through the same `apply_actions` path the app uses. Every CHOW, collision, and leftover was checked against address, parent, `lifetime_revenue`, and `outstanding_ar` before write. The daily job does not call an LLM — matching is deterministic so it can rerun.
+
+## What I would build next
+
+1. Fixture tests for every CHOW / duplicate / collision we found (the file in `tests/` is the start of that).
+2. Nightly email of the pending queue instead of only a local app.
+3. Administrator / phone sync from the community pages onto CRM contacts.
+
+## Live demo
+
+1. Show the empty queue after `pipeline run`.
+2. Flip `CONFIDENT` in `src/match.py` by a few points, rematch, refresh `:5055`.
+3. Reject one leftover and rerun — it stays off the queue because of `data/decisions.json`.
+4. Open Marietta on Cedar Trail in the CRM browser and show `chow_current_account`.
