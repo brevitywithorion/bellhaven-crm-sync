@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Bellhaven CRM review queue</title>
+  <style>
+    :root { --green:#2E5D50; --gold:#C9A227; --cream:#FAF7F0; --ink:#2B2B26; --line:#E4DFD2; }
+    body { margin:0; font-family: Georgia, serif; background: var(--cream); color: var(--ink); }
+    header { background: var(--green); color:#fff; padding:18px 28px; display:flex; justify-content:space-between; }
+    header h1 { margin:0; font-weight:normal; } header b { color: var(--gold); font-weight:normal; }
+    .wrap { max-width:1180px; margin:0 auto; padding:24px; }
+    .card { background:#fff; border:1px solid var(--line); border-radius:6px; padding:18px 20px; margin-bottom:16px; }
+    .kind { font-family: Verdana, sans-serif; font-size:11px; text-transform:uppercase; background:#efe7d0; padding:2px 7px; }
+    .cols { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    pre { background:#f4f1ea; padding:10px 12px; overflow:auto; font-size:12px; }
+    .approve { background: var(--green); color:#fff; border:0; padding:8px 14px; cursor:pointer; }
+    .reject { background:#7a3030; color:#fff; border:0; padding:8px 14px; cursor:pointer; }
+  </style>
+</head>
+<body>
+  <header><h1>Bellhaven <b>review queue</b></h1><div id="meta"></div></header>
+  <div class="wrap"><div id="list"></div></div>
+<script>
+async function load(){
+  const data = await (await fetch("/api/proposals")).json();
+  const ALL = data.pending || [];
+  document.getElementById("meta").textContent = (data.generated_at||"") + " · " + ALL.length + " pending";
+  const root = document.getElementById("list");
+  if (!ALL.length){ root.innerHTML = "<p>Nothing in this queue.</p>"; return; }
+  root.innerHTML = ALL.map(p => {
+    const w = p.website || {};
+    const accts = (p.accounts||[]).map(a => `<div><strong>${esc(a.name)}</strong><div>${esc(a.account_id)} · ${esc(a.status)} · ${esc(a.parent_name||"(none)")}</div><div>${esc(a.billing_street)}, ${esc(a.billing_city)} ${esc(a.billing_state)} ${esc(a.billing_zip)}</div><div>rev ${a.lifetime_revenue} · AR ${a.outstanding_ar}</div></div>`).join("") || "<em>No existing account</em>";
+    return `<article class="card"><span class="kind">${esc(p.kind)}</span><h2>${esc(p.title)}</h2><div class="cols"><div><h3>Website</h3>${p.website?`<strong>${esc(w.name)}</strong><div>${esc(w.street)}, ${esc(w.city)} ${esc(w.state)} ${esc(w.zip)}</div><div>${esc(w.care_offerings)}</div>`:"leftover"}</div><div><h3>CRM</h3>${accts}</div></div><ul>${(p.evidence||[]).map(e=>`<li>${esc(e)}</li>`).join("")}</ul><pre>${esc(JSON.stringify(p.actions,null,2))}</pre><button class="approve" onclick="decide('${esc(p.key)}','approved')">Approve & write</button> <button class="reject" onclick="decide('${esc(p.key)}','rejected')">Reject</button></article>`;
+  }).join("");
+}
+function esc(s){ return String(s??"").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+async function decide(key, decision){
+  if (decision==="approved" && !confirm("Write this change to the CRM?")) return;
+  const r = await fetch("/api/proposals/"+encodeURIComponent(key)+"/decide", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({decision})});
+  const data = await r.json();
+  if (!r.ok){ alert(data.detail || JSON.stringify(data)); return; }
+  await load();
+}
+load();
+</script>
+</body>
+</html>
