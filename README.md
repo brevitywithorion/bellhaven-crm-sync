@@ -15,6 +15,8 @@ python -m src.review_app               # http://127.0.0.1:5055
 python -m unittest tests.test_match    # no token needed
 ```
 
+CI (`.github/workflows/ci.yml`) runs those unit tests on every push and PR to `main` — no token, no CRM writes.
+
 ## Review app
 
 Local queue at `http://127.0.0.1:5055`. Each card is website vs CRM, the evidence, the exact API payload, and Approve / Reject. Writes only happen on Approve.
@@ -89,3 +91,4 @@ An AI coding agent inspected the site and OpenAPI, drafted the scraper / matcher
 2. Flip `CONFIDENT` in `src/match.py` by a few points, rematch, refresh `:5055`.
 3. Reject one leftover and rerun — it stays off the queue because of `data/decisions.json`.
 4. Open Marietta on Cedar Trail in the CRM browser and show `chow_current_account`.
+5. Skip `__PROBE_DELETE_ME__` / `TEST DO NOT KEEP` rows in the CRM browser — sandbox schema probes, already Inactive.
