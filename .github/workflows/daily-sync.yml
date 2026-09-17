@@ -1,0 +1,30 @@
+name: Daily Bellhaven website / CRM refresh
+
+on:
+  schedule:
+    - cron: "15 11 * * 1-5"   # 06:15 America/New_York
+  workflow_dispatch:
+
+jobs:
+  refresh-queue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Scrape + snapshot + match
+        env:
+          CRM_TOKEN: ${{ secrets.CRM_TOKEN }}
+        run: python -m src.pipeline run
+      - name: Upload queue artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-queue
+          path: |
+            data/website_communities.json
+            data/proposals.json
+            data/decisions.json
+          if-no-files-found: warn
+      # Intentionally no approve step. CRM writes only happen from the review app.

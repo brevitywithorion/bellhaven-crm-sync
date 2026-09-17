@@ -1,0 +1,10 @@
+.env
+data/decisions.json
+data/proposals.json
+data/website_communities.json
+data/accounts_snapshot.json
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store

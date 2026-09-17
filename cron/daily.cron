@@ -1,0 +1,4 @@
+# Refresh website + CRM snapshots and rebuild the review queue every weekday at 06:15.
+# Writes never happen here — a person still has to approve in the review app.
+# Re-runs are safe: src/store.py skips fingerprints that were already approved or rejected.
+15 6 * * 1-5 cd /opt/bellhaven-crm-sync && /usr/bin/python3 -m src.pipeline run >> /var/log/bellhaven-sync.log 2>&1
