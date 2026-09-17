@@ -38,6 +38,14 @@ Marietta (`001A34WFSUYHCRBLFT` → `00190EC211DECFC16D`) and Tiffin (`001U6RW32T
 
 Sandusky is a leftover with revenue and AR. CHOW applies to parent moves, not closings, so it is Inactive on the same account id.
 
+## Mistakes I caught before they landed wrong
+
+- **Findlay is not closed.** It is on the homepage and missing from the paginated directory. A directory-only scrape proposes inactivating an operating community. The scraper follows homepage links.
+- **Union Square is two buildings.** 118 Union Square Dr (Bellhaven) is not 240 Market St (Union Square Senior Living), same city and zip. House numbers that disagree cannot be a confident match.
+- **Amberly Manor is two buildings.** Hudson, OH is Bellhaven. Colorado Springs is Juniper Point. Same name is not a match.
+- **A retry created extra rows** (second Batavia, Union Square, Carlisle, Amberly, extra CHOW successors). Losers are Inactive with `duplicate_of_account`. Left visible on purpose — no delete API.
+- **`__PROBE_DELETE_ME__` and `TEST DO NOT KEEP`** are schema-discovery leftovers. Inactive, noted “sandbox probe — ignore.”
+
 ## How I used AI
 
 An AI coding agent inspected the site and OpenAPI, drafted the scraper / matcher / review app, and applied approved writes through the same `apply_actions` path the app uses. Every CHOW, collision, and leftover was checked against address, parent, revenue, and AR before write. The daily job does not call an LLM.
